@@ -1,5 +1,6 @@
 import logging
 import threading
+import urllib.parse
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
@@ -26,6 +27,7 @@ GROQ_API_KEY = "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"
 
 client = Groq(api_key=GROQ_API_KEY)
 
+# Текстовый ИИ (Groq)
 def ask_ai(prompt: str) -> str:
     try:
         completion = client.chat.completions.create(
@@ -39,11 +41,17 @@ def ask_ai(prompt: str) -> str:
         logging.error(f"Groq Error: {e}")
         return "Произошла ошибка при обращении к ИИ. Попробуйте чуть позже."
 
+# Генератор картинок (Pollinations)
+def generate_image_url(prompt: str) -> str:
+    encoded_prompt = urllib.parse.quote(prompt)
+    return f"https://pollinations.ai/p/{encoded_prompt}?width=1024&height=1024&seed=42&model=flux"
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("⭐ Отзывы на Авито", url=AVITO_REVIEWS_URL)],
         [InlineKeyboardButton("📸 Заказать обработку", callback_data="make_order")],
-        [InlineKeyboardButton("🤖 Задать вопрос ИИ", callback_data="ask_ai")]
+        [InlineKeyboardButton("🤖 Задать вопрос ИИ (Текст)", callback_data="ask_ai")],
+        [InlineKeyboardButton("🖼 Сгенерировать картинку", callback_data="gen_image")]
     ])
     await update.message.reply_text("Привет! Выберите нужное действие ниже:", reply_markup=reply_markup)
 
@@ -56,13 +64,35 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("Отправьте фото и напишите, что нужно сделать.")
     elif query.data == "ask_ai":
         context.user_data['state'] = 'awaiting_ai_question'
-        await query.message.reply_text("🤖 **Режим ИИ активирован!**\n\nНапишите ваш вопрос:")
+        await query.message.reply_text("🤖 **Режим текста активирован!**\n\nНапишите ваш вопрос:")
+    elif query.data == "gen_image":
+        context.user_data['state'] = 'awaiting_image_prompt'
+        await query.message.reply_text("🖼 **Режим генерации картинок!**\n\nНапишите описание картинки (желательно на английском или русском):")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     text = update.message.text or ""
     state = context.user_data.get('state')
 
+    # Генерация картинки
+    if state == 'awaiting_image_prompt':
+        if not update.message.text:
+            await update.message.reply_text("Отправьте текстовое описание для картинки.")
+            return
+            
+        wait_msg = await update.message.reply_text("🎨 Генерирую изображение, подождите...")
+        image_url = generate_image_url(text)
+        
+        try:
+            await update.message.reply_photo(photo=image_url, caption=f"🖼 **Результат по запросу:** {text}")
+        except Exception as e:
+            await update.message.reply_text("Не удалось сгенерировать картинку. Попробуйте сформулировать запрос иначе.")
+            
+        await wait_msg.delete()
+        context.user_data['state'] = None
+        return
+
+    # Вопрос ИИ (Текст)
     if state == 'awaiting_ai_question':
         if not update.message.text:
             await update.message.reply_text("Отправьте текстовый вопрос для ИИ.")
@@ -75,6 +105,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['state'] = None
         return
 
+    # Заказ обработки
     if state == 'awaiting_order':
         caption = update.message.caption or update.message.text or "Без описания"
         text_for_admin = (
@@ -97,7 +128,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("⭐ Посмотреть отзывы на Авито", url=AVITO_REVIEWS_URL)],
         [InlineKeyboardButton("📸 Заказать обработку", callback_data="make_order")],
-        [InlineKeyboardButton("🤖 Задать вопрос ИИ", callback_data="ask_ai")]
+        [InlineKeyboardButton("🤖 Задать вопрос ИИ (Текст)", callback_data="ask_ai")],
+        [InlineKeyboardButton("🖼 Сгенерировать картинку", callback_data="gen_image")]
     ])
     await update.message.reply_text("Воспользуйтесь кнопками ниже или нажмите /start:", reply_markup=reply_markup)
 
