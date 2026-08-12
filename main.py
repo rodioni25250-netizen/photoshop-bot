@@ -1,8 +1,10 @@
 import logging
 import threading
+import asyncio
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
+import g4f
 
 # Веб-сервер для Render
 app = Flask(__name__)
@@ -22,14 +24,28 @@ ADMIN_ID = 8129509696
 AVITO_REVIEWS_URL = "https://www.avito.ru/user/0fbd712dacdb0ef3d63451ac32d33597/profile?src=sharing"
 # ------------------
 
+# Функция обращения к ИИ
+async def ask_ai(prompt: str) -> str:
+    try:
+        response = await asyncio.to_thread(
+            g4f.ChatCompletion.create,
+            model=g4f.models.gpt_4o,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return str(response)
+    except Exception as e:
+        logging.error(f"AI Error: {e}")
+        return "Извините, ИИ сейчас недоступен. Попробуйте задать вопрос позже."
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("⭐ Отзывы на Авито", url=AVITO_REVIEWS_URL)],
-        [InlineKeyboardButton("📸 Заказать обработку", callback_data="make_order")]
+        [InlineKeyboardButton("📸 Заказать обработку", callback_data="make_order")],
+        [InlineKeyboardButton("🤖 Задать вопрос ИИ", callback_data="ask_ai")]
     ])
     await update.message.reply_text(
-        "Привет! Я помогу вам сделать заказ на обработку и редактирование фото.\n\n"
-        "Вы можете посмотреть отзывы наших клиентов на Авито или оформить заказ прямо здесь:",
+        "Привет! Я помогу вам сделать заказ на обработку фото, посмотреть отзывы или пообщаться с ИИ.\n\n"
+        "Выберите нужное действие ниже:",
         reply_markup=reply_markup
     )
 
@@ -38,28 +54,32 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     if query.data == "make_order":
-        context.user_data['awaiting_order'] = True
+        context.user_data['state'] = 'awaiting_order'
         await query.message.reply_text(
             "Отправьте фотографию и напишите в описании (или отдельным сообщением), что именно нужно сделать."
+        )
+    elif query.data == "ask_ai":
+        context.user_data['state'] = 'awaiting_ai_question'
+        await query.message.reply_text(
+            "🤖 **Режим ИИ активирован!**\n\nНапишите ваш вопрос или задачу для нейросети прямо следующим сообщением:"
         )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     text = update.message.text or ""
+    state = context.user_data.get('state')
 
-    # Если пользователь нажала кнопку меню "Отзывы"
-    if "Отзывы" in text:
-        reply_markup = InlineKeyboardMarkup([
-            [InlineKeyboardButton("⭐ Перейти к отзывам на Авито", url=AVITO_REVIEWS_URL)]
-        ])
-        await update.message.reply_text(
-            "Нажмите на кнопку ниже, чтобы посмотреть отзывы реальных клиентов на Авито:",
-            reply_markup=reply_markup
-        )
+    # Режим ожидания вопроса для ИИ
+    if state == 'awaiting_ai_question':
+        wait_msg = await update.message.reply_text("🤔 ИИ думает над ответом, подождите немного...")
+        ai_response = await ask_ai(text)
+        await wait_msg.delete()
+        await update.message.reply_text(f"🤖 **Ответ ИИ:**\n\n{ai_response}", parse_mode="Markdown")
+        context.user_data['state'] = None
         return
 
-    # Если пользователь оформляет заказ
-    if context.user_data.get('awaiting_order'):
+    # Режим оформления заказа
+    if state == 'awaiting_order':
         caption = update.message.caption or update.message.text or "Без описания"
         text_for_admin = (
             f"📥 **Новый заказ!**\n\n"
@@ -75,16 +95,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=ADMIN_ID, text=text_for_admin, parse_mode="Markdown")
         
         await update.message.reply_text("Спасибо! Ваш заказ принят и отправлен мастеру. Скоро с вами свяжутся!")
-        context.user_data['awaiting_order'] = False
-    else:
-        reply_markup = InlineKeyboardMarkup([
-            [InlineKeyboardButton("⭐ Посмотреть отзывы на Авито", url=AVITO_REVIEWS_URL)],
-            [InlineKeyboardButton("📸 Заказать обработку", callback_data="make_order")]
-        ])
-        await update.message.reply_text(
-            "Для оформления заказа или просмотра отзывов воспользуйтесь кнопками ниже или нажмите /start:",
-            reply_markup=reply_markup
-        )
+        context.user_data['state'] = None
+        return
+
+    # Главное меню для остальных сообщений
+    reply_markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⭐ Посмотреть отзывы на Авито", url=AVITO_REVIEWS_URL)],
+        [InlineKeyboardButton("📸 Заказать обработку", callback_data="make_order")],
+        [InlineKeyboardButton("🤖 Задать вопрос ИИ", callback_data="ask_ai")]
+    ])
+    await update.message.reply_text(
+        "Воспользуйтесь кнопками ниже или нажмите /start:",
+        reply_markup=reply_markup
+    )
 
 def main():
     threading.Thread(target=run_web, daemon=True).start()
