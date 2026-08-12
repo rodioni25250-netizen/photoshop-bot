@@ -1,9 +1,9 @@
 import logging
 import threading
-import requests
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
+from groq import Groq
 
 app = Flask(__name__)
 
@@ -16,24 +16,28 @@ def run_web():
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
+# --- НАСТРОЙКИ ---
 BOT_TOKEN = "8705425815:AAETJ22L8ORvjxVXqu_VP_wUzodbY122-10"
 ADMIN_ID = 8129509696
 AVITO_REVIEWS_URL = "https://www.avito.ru/user/0fbd712dacdb0ef3d63451ac32d33597/profile?src=sharing"
 
+GROQ_API_KEY = "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"
+# ------------------
+
+client = Groq(api_key=GROQ_API_KEY)
+
 def ask_ai(prompt: str) -> str:
     try:
-        url = "https://text.pollinations.ai/"
-        response = requests.post(
-            url, 
-            json={"messages": [{"role": "user", "content": prompt}], "model": "openai"}, 
-            timeout=20
+        completion = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            max_tokens=1024,
         )
-        if response.status_code == 200:
-            return response.text
-        return "Не удалось получить ответ от ИИ. Попробуйте еще раз."
+        return completion.choices[0].message.content
     except Exception as e:
-        logging.error(f"AI Error: {e}")
-        return "Ошибка соединения с ИИ. Попробуйте позже."
+        logging.error(f"Groq Error: {e}")
+        return "Произошла ошибка при обращении к ИИ. Попробуйте чуть позже."
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup([
@@ -41,10 +45,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📸 Заказать обработку", callback_data="make_order")],
         [InlineKeyboardButton("🤖 Задать вопрос ИИ", callback_data="ask_ai")]
     ])
-    await update.message.reply_text(
-        "Привет! Выберите нужное действие ниже:",
-        reply_markup=reply_markup
-    )
+    await update.message.reply_text("Привет! Выберите нужное действие ниже:", reply_markup=reply_markup)
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
