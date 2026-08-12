@@ -1,11 +1,10 @@
 import logging
 import threading
+import requests
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
-from openai import OpenAI
 
-# Веб-сервер для Render
 app = Flask(__name__)
 
 @app.route('/')
@@ -17,27 +16,24 @@ def run_web():
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# --- НАСТРОЙКИ ---
 BOT_TOKEN = "8705425815:AAETJ22L8ORvjxVXqu_VP_wUzodbY122-10"
 ADMIN_ID = 8129509696
 AVITO_REVIEWS_URL = "https://www.avito.ru/user/0fbd712dacdb0ef3d63451ac32d33597/profile?src=sharing"
-OPENAI_API_KEY = "Sk-proj-K_LRtzYFSCakoFfzB6QZ4Cp78JgcGww_horpAUu0BFLd3NYb4q18De37yNrAGjmZ_KMp9mXI9FT3BlbkFJvOIyaG7PGpGn4gZ_XfFA3w5Ss0FRvcKhHYPH1diNhdky7f81KSfztDTqCxpBd69XIVMrDgZ9kA"
-# ------------------
 
-client = OpenAI(api_key=OPENAI_API_KEY)
-
-# Функция обращения к ChatGPT
 def ask_ai(prompt: str) -> str:
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=1000
+        url = "https://text.pollinations.ai/"
+        response = requests.post(
+            url, 
+            json={"messages": [{"role": "user", "content": prompt}], "model": "openai"}, 
+            timeout=20
         )
-        return response.choices[0].message.content
+        if response.status_code == 200:
+            return response.text
+        return "Не удалось получить ответ от ИИ. Попробуйте еще раз."
     except Exception as e:
-        logging.error(f"OpenAI Error: {e}")
-        return "Извините, произошла ошибка при обращении к ИИ. Попробуйте позже."
+        logging.error(f"AI Error: {e}")
+        return "Ошибка соединения с ИИ. Попробуйте позже."
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup([
@@ -46,8 +42,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🤖 Задать вопрос ИИ", callback_data="ask_ai")]
     ])
     await update.message.reply_text(
-        "Привет! Я помогу вам сделать заказ на обработку фото, посмотреть отзывы или пообщаться с ИИ.\n\n"
-        "Выберите нужное действие ниже:",
+        "Привет! Выберите нужное действие ниже:",
         reply_markup=reply_markup
     )
 
@@ -57,24 +52,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.data == "make_order":
         context.user_data['state'] = 'awaiting_order'
-        await query.message.reply_text(
-            "Отправьте фотографию и напишите в описании (или отдельным сообщением), что именно нужно сделать."
-        )
+        await query.message.reply_text("Отправьте фото и напишите, что нужно сделать.")
     elif query.data == "ask_ai":
         context.user_data['state'] = 'awaiting_ai_question'
-        await query.message.reply_text(
-            "🤖 **Режим ИИ активирован!**\n\nНапишите ваш текстовый вопрос или задачу для нейросети:"
-        )
+        await query.message.reply_text("🤖 **Режим ИИ активирован!**\n\nНапишите ваш вопрос:")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     text = update.message.text or ""
     state = context.user_data.get('state')
 
-    # Режим ИИ (ответ на тексты)
     if state == 'awaiting_ai_question':
         if not update.message.text:
-            await update.message.reply_text("Пожалуйста, отправьте текстовый вопрос для ИИ.")
+            await update.message.reply_text("Отправьте текстовый вопрос для ИИ.")
             return
             
         wait_msg = await update.message.reply_text("🤔 ИИ генерирует ответ...")
@@ -84,14 +74,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['state'] = None
         return
 
-    # Режим оформления заказа
     if state == 'awaiting_order':
         caption = update.message.caption or update.message.text or "Без описания"
         text_for_admin = (
             f"📥 **Новый заказ!**\n\n"
             f"👤 **От:** {user.full_name} (@{user.username if user.username else 'нет_юзернейма'})\n"
             f"🆔 **ID:** `{user.id}`\n\n"
-            f"📝 **Текст/Описание:** {caption}"
+            f"📝 **Текст:** {caption}"
         )
 
         if update.message.photo:
@@ -100,20 +89,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await context.bot.send_message(chat_id=ADMIN_ID, text=text_for_admin, parse_mode="Markdown")
         
-        await update.message.reply_text("Спасибо! Ваш заказ принят и отправлен мастеру. Скоро с вами свяжутся!")
+        await update.message.reply_text("Спасибо! Ваш заказ принят и отправлен мастеру.")
         context.user_data['state'] = None
         return
 
-    # Главное меню
     reply_markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("⭐ Посмотреть отзывы на Авито", url=AVITO_REVIEWS_URL)],
         [InlineKeyboardButton("📸 Заказать обработку", callback_data="make_order")],
         [InlineKeyboardButton("🤖 Задать вопрос ИИ", callback_data="ask_ai")]
     ])
-    await update.message.reply_text(
-        "Воспользуйтесь кнопками ниже или нажмите /start:",
-        reply_markup=reply_markup
-    )
+    await update.message.reply_text("Воспользуйтесь кнопками ниже или нажмите /start:", reply_markup=reply_markup)
 
 def main():
     threading.Thread(target=run_web, daemon=True).start()
