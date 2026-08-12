@@ -17,7 +17,7 @@ def run_web():
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 # --- НАСТРОЙКИ ---
-BOT_TOKEN = "8705425815:AAETJ22L8ORvjxVXqu_VP_wUzodbY122-10"
+BOT_TOKEN = "8705425815:AAFrl0KCx8qtxOUHRgvOUCNtrnAJCxCybyI"
 ADMIN_ID = 8129509696
 AVITO_REVIEWS_URL = "https://www.avito.ru/user/0fbd712dacdb0ef3d63451ac32d33597/profile?src=sharing"
 
